@@ -114,6 +114,11 @@ const activityController = {
         data.ownerFacultyCode = req.user.faculty_code;
       }
       
+      // Force private status if it's "ขออนุมัติ" (default)
+      if (!data.status || data.status === 'ขออนุมัติ') {
+        data.publishStatus = 'private';
+      }
+      
       const activity = await Activity.create(data, req.user.id);
 
       // Handle Attachments
@@ -174,7 +179,49 @@ const activityController = {
         return res.status(403).json({ message: 'You can only change visibility for activities in your own faculty' });
       }
 
+      // Visibility Restriction: Request Approval must be private
+      if (activity.status === 'ขออนุมัติ' && publishStatus === 'public') {
+        return res.status(400).json({ message: 'กิจกรรมที่อยู่ในสถานะ "ขออนุมัติ" จะต้องเป็น Private เท่านั้น' });
+      }
+
       const updated = await Activity.updateVisibility(activityId, publishStatus, req.user.id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Update activity status (ขออนุมัติ, ดำเนินการ, ปิดกิจกรรม)
+   */
+  changeStatus: async (req, res) => {
+    try {
+      const activityId = req.params.id;
+      const { status } = req.body;
+      const activity = await Activity.findById(activityId);
+
+      if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+      // RBAC Rules
+      if (req.user.role === 'officer') {
+        // Officer can only change to 'ปิดกิจกรรม'
+        if (status !== 'ปิดกิจกรรม') {
+          return res.status(403).json({ message: 'เจ้าหน้าที่สามารถเปลี่ยนสถานะเป็น "ปิดกิจกรรม" ได้เท่านั้น' });
+        }
+        // Officer must be the creator
+        if (parseInt(activity.creator_id) !== parseInt(req.user.id)) {
+          return res.status(403).json({ message: 'คุณสามารถปิดได้เฉพาะกิจกรรมที่คุณสร้างขึ้นเองเท่านั้น' });
+        }
+      } else if (req.user.role === 'admin' || req.user.role === 'superadmin') {
+        // Admin can change to 'ปิดกิจกรรม' or 'ดำเนินการ'
+        if (status !== 'ปิดกิจกรรม' && status !== 'ดำเนินการ') {
+          return res.status(400).json({ message: 'สถานะไม่ถูกต้อง (ต้องเป็น "ปิดกิจกรรม" หรือ "ดำเนินการ")' });
+        }
+      } else {
+        return res.status(403).json({ message: 'คุณไม่มีสิทธิ์เปลี่ยนสถานะกิจกรรม' });
+      }
+
+      const updated = await Activity.updateStatus(activityId, status, req.user.id);
       res.json(updated);
     } catch (error) {
       res.status(500).json({ message: error.message });
@@ -192,11 +239,22 @@ const activityController = {
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
       
       // RBAC Ownership Check
-      if (req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
-        return res.status(403).json({ message: 'You can only update activities in your own faculty' });
+      if (req.user.role === 'officer') {
+        if (activity.owner_faculty_code !== req.user.faculty_code) {
+          return res.status(403).json({ message: 'You can only update activities in your own faculty' });
+        }
+        // Status Check: Cannot edit if status is 'ปิดกิจกรรม'
+        if (activity.status === 'ปิดกิจกรรม') {
+          return res.status(403).json({ message: 'ไม่สามารถแก้ไขกิจกรรมที่ปิดแล้วได้' });
+        }
       }
 
       const data = { ...req.body };
+
+      // Visibility Restriction: Request Approval must be private
+      if (activity.status === 'ขออนุมัติ' && data.publishStatus === 'public') {
+        return res.status(400).json({ message: 'กิจกรรมที่อยู่ในสถานะ "ขออนุมัติ" จะต้องเป็น Private เท่านั้น' });
+      }
 
       // Handle multi-field file upload
       if (req.files) {

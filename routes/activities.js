@@ -62,6 +62,13 @@ router.patch('/:id/visibility',
   authorizeRoles('officer', 'admin', 'superadmin'),
   activityController.updateVisibility
 );
+
+// Officer/Admin: Update activity status
+router.patch('/:id/status',
+  authenticateToken,
+  authorizeRoles('officer', 'admin', 'superadmin'),
+  activityController.changeStatus
+);
 // Officer/Admin: Attachment management
 router.patch('/attachments/:attachmentId/visibility',
   authenticateToken,
