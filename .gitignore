@@ -1,0 +1,23 @@
+# Dependency directories
+node_modules/
+uploads/
+
+# Optional npm cache directory
+.npm
+
+# Environment variables
+.env
+
+# Build output
+/dist
+/build
+
+# Logs
+logs
+*.log
+
+# IDE files and caches (optional)
+.vscode/
+.idea/
+.cache
+.parcel-cache

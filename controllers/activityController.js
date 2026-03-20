@@ -1,0 +1,327 @@
+const Activity = require('../models/activity');
+const Registration = require('../models/registration');
+
+/**
+ * Controller for Activities and Registrations
+ */
+const activityController = {
+  /**
+   * Get all active activities for public/student view
+   */
+  getPublicActivities: async (req, res) => {
+    try {
+      const { page, limit, search, academicYear, semester } = req.query;
+      const { rows, total } = await Activity.findAll({ 
+        status: 'ดำเนินการ', 
+        publishStatus: 'public',
+        page,
+        limit,
+        search,
+        academicYear,
+        semester
+      });
+      res.json({ rows, total, page: parseInt(page) || 1, limit: parseInt(limit) || 10 });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Get all activities for management (Officer/Admin)
+   */
+  getManageActivities: async (req, res) => {
+    try {
+      const { page, limit, search, academicYear, semester, status } = req.query;
+      const filters = {
+        page,
+        limit,
+        search,
+        academicYear,
+        semester,
+        status
+      };
+      
+      if (req.user.role === 'officer') {
+        filters.ownerFacultyCode = req.user.faculty_code;
+      }
+      
+      const { rows, total } = await Activity.findAll(filters);
+      res.json({ rows, total, page: parseInt(page) || 1, limit: parseInt(limit) || 10 });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Get activity by ID
+   */
+  getActivityById: async (req, res) => {
+    try {
+      const activity = await Activity.findById(req.params.id);
+      if (!activity) return res.status(404).json({ message: 'Activity not found' });
+      
+      // If management headers or specific management flag is used, check access
+      // For now, simple view is fine, but we might want to restrict if it's private
+      if (activity.publish_status === 'private' && req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
+        return res.status(403).json({ message: 'Access denied to this activity' });
+      }
+
+      res.json(activity);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Create a new activity
+   */
+  createActivity: async (req, res) => {
+    try {
+      const data = { ...req.body };
+
+      // Handle multi-field file upload
+      if (req.files) {
+        if (req.files['coverImage']) {
+          data.coverImage = req.files['coverImage'][0].path.replace(/\\/g, '/');
+        }
+      }
+
+      // Handle stringified arrays from FormData
+      try {
+        if (typeof data.skills === 'string') {
+          data.skills = JSON.parse(data.skills).filter(s => s && s !== "");
+        } else if (Array.isArray(data.skills)) {
+          data.skills = data.skills.filter(s => s && s !== "");
+        } else {
+          data.skills = [];
+        }
+
+        if (typeof data.faculties === 'string') {
+          data.faculties = JSON.parse(data.faculties).filter(f => f && f !== "");
+        } else if (Array.isArray(data.faculties)) {
+          data.faculties = data.faculties.filter(f => f && f !== "");
+        } else {
+          data.faculties = [];
+        }
+      } catch (e) {
+        console.error('Error parsing skills/faculties:', e);
+        data.skills = data.skills || [];
+        data.faculties = data.faculties || [];
+      }
+      
+      // Officers can only create activities for their own faculty
+      if (req.user.role === 'officer') {
+        data.ownerFacultyCode = req.user.faculty_code;
+      }
+      
+      const activity = await Activity.create(data, req.user.id);
+
+      // Handle Attachments
+      if (req.files && req.files['attachments'] && activity.id) {
+        let metadata = [];
+        if (data.attachmentMetadata) {
+          try { metadata = JSON.parse(data.attachmentMetadata); } catch (e) { metadata = []; }
+        }
+
+        for (const file of req.files['attachments']) {
+          const fileMeta = metadata.find(m => m.originalName === file.originalname) || {};
+          await Activity.addAttachment(activity.id, {
+            filePath: file.path.replace(/\\/g, '/'),
+            fileName: file.originalname,
+            displayName: fileMeta.displayName || file.originalname,
+            isPublished: fileMeta.isPublished !== undefined ? fileMeta.isPublished : true
+          });
+        }
+      }
+
+      res.status(201).json(activity);
+    } catch (error) {
+      console.error('ERROR in createActivity:', error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Approve an activity (Status: ดำเนินการ)
+   */
+  approveActivity: async (req, res) => {
+    try {
+      // Extra check despite middleware
+      if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+        return res.status(403).json({ message: 'Only admins can approve activities' });
+      }
+
+      const activity = await Activity.updateStatus(req.params.id, 'ดำเนินการ', req.user.id);
+      res.json(activity);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Update activity visibility (publishStatus)
+   */
+  updateVisibility: async (req, res) => {
+    try {
+      const activityId = req.params.id;
+      const { publishStatus } = req.body;
+      const activity = await Activity.findById(activityId);
+      
+      if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+      // RBAC Ownership Check
+      if (req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
+        return res.status(403).json({ message: 'You can only change visibility for activities in your own faculty' });
+      }
+
+      const updated = await Activity.updateVisibility(activityId, publishStatus, req.user.id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Update an existing activity
+   */
+  updateActivity: async (req, res) => {
+    try {
+      const activityId = req.params.id;
+      const activity = await Activity.findById(activityId);
+      
+      if (!activity) return res.status(404).json({ message: 'Activity not found' });
+      
+      // RBAC Ownership Check
+      if (req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
+        return res.status(403).json({ message: 'You can only update activities in your own faculty' });
+      }
+
+      const data = { ...req.body };
+
+      // Handle multi-field file upload
+      if (req.files) {
+        if (req.files['coverImage']) {
+          data.coverImage = req.files['coverImage'][0].path.replace(/\\/g, '/');
+        }
+      }
+
+      // Handle stringified arrays from FormData
+      if (typeof data.skills === 'string') {
+        try { data.skills = JSON.parse(data.skills); } catch (e) { data.skills = []; }
+      }
+      if (typeof data.faculties === 'string') {
+        try { data.faculties = JSON.parse(data.faculties); } catch (e) { data.faculties = []; }
+      }
+
+      const updated = await Activity.update(activityId, data, req.user.id);
+
+      // Handle New Attachments
+      if (req.files && req.files['attachments']) {
+        let metadata = [];
+        if (data.attachmentMetadata) {
+          try { metadata = JSON.parse(data.attachmentMetadata); } catch (e) { metadata = []; }
+        }
+
+        for (const file of req.files['attachments']) {
+          const fileMeta = metadata.find(m => m.originalName === file.originalname) || {};
+          await Activity.addAttachment(activityId, {
+            filePath: file.path.replace(/\\/g, '/'),
+            fileName: file.originalname,
+            displayName: fileMeta.displayName || file.originalname,
+            isPublished: fileMeta.isPublished !== undefined ? fileMeta.isPublished : true
+          });
+        }
+      }
+
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Delete an activity
+   */
+  deleteActivity: async (req, res) => {
+    try {
+      const activityId = req.params.id;
+      const activity = await Activity.findById(activityId);
+      
+      if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+      // RBAC Ownership Check: Officer can only delete if they are the creator
+      if (req.user.role === 'officer' && parseInt(activity.creator_id) !== parseInt(req.user.id)) {
+        return res.status(403).json({ message: 'คุณสามารถลบได้เฉพาะกิจกรรมที่คุณสร้างขึ้นเองเท่านั้น' });
+      }
+
+      await Activity.delete(activityId);
+      res.json({ message: 'Activity deleted successfully' });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Update individual attachment visibility
+   */
+  updateAttachmentVisibility: async (req, res) => {
+    try {
+      const { attachmentId } = req.params;
+      const { isPublished } = req.body;
+      
+      const updated = await Activity.updateAttachmentVisibility(attachmentId, isPublished);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Delete an attachment
+   */
+  deleteAttachment: async (req, res) => {
+    try {
+      const { attachmentId } = req.params;
+      
+      // Potential: Add fs.unlink here to delete actual file if needed
+      const deleted = await Activity.deleteAttachment(attachmentId);
+      res.json(deleted);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Register a student for an activity
+   */
+  registerActivity: async (req, res) => {
+    try {
+      const activityId = req.params.id;
+      const userId = req.user.id;
+
+      // Check if activity exists and is open
+      const activity = await Activity.findById(activityId);
+      if (!activity) return res.status(404).json({ message: 'ไม่พบข้อมูลกิจกรรม' });
+      
+      if (activity.status !== 'ดำเนินการ') {
+        return res.status(400).json({ message: 'กิจกรรมนี้ยังไม่เปิดให้ลงทะเบียน' });
+      }
+
+      // Check capacity
+      const currentParticipants = await Registration.countForActivity(activityId);
+      if (activity.max_participants && currentParticipants >= activity.max_participants) {
+        return res.status(400).json({ message: 'กิจกรรมนี้มีผู้สมัครเต็มจำนวนแล้ว (Full)' });
+      }
+
+      const registration = await Registration.create(userId, activityId);
+      res.status(201).json(registration);
+    } catch (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ message: 'คุณได้ลงทะเบียนกิจกรรมนี้ไปแล้ว' });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  }
+};
+
+module.exports = activityController;
