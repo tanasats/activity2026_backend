@@ -15,6 +15,9 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     // Generate a unique filename: uuid + extension
     const uniqueSuffix = uuidv4();
+    // Fix Thai Encoding for filename from Multer
+    //const utf8Name = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    //cb(null, `${uniqueSuffix}${path.extname(utf8Name)}`);
     cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
@@ -28,7 +31,7 @@ const fileFilter = (req, file, cb) => {
 
   // Simple extension check for document types
   const isValidExt = allowedTypes.test(ext);
-  
+
   if (isValidExt) {
     return cb(null, true);
   } else {

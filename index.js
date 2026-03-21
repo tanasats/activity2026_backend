@@ -26,10 +26,13 @@ const authRoutes = require('./routes/auth');
 const activityRoutes = require('./routes/activities');
 const reportRoutes = require('./routes/reports');
 const masterDataRoutes = require('./routes/masterData');
+const userRoutes = require('./routes/users');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/activities', activityRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/master', masterDataRoutes);
+app.use('/api/users', userRoutes);
 
 // Global Error Handler (Multer & General)
 app.use((err, req, res, next) => {

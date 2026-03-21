@@ -152,6 +152,11 @@ const Activity = {
       params.push(filters.ownerFacultyCode);
     }
 
+    if (filters.creatorId) {
+      whereClauses.push(`a.creator_id = $${params.length + 1}`);
+      params.push(filters.creatorId);
+    }
+
     if (filters.academicYear && filters.academicYear !== 'all') {
       whereClauses.push(`a.academic_year = $${params.length + 1}`);
       params.push(parseInt(filters.academicYear));
@@ -346,6 +351,18 @@ const Activity = {
     }
 
     return activity;
+  },
+
+  updateAttachment: async (id, data) => {
+    const result = await query(
+      `UPDATE activity_attachments 
+       SET display_name = COALESCE($1, display_name), 
+           is_published = COALESCE($2, is_published),
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $3 RETURNING *`,
+      [data.displayName, data.isPublished, id]
+    );
+    return result.rows[0];
   },
 
   delete: async (id) => {

@@ -11,8 +11,8 @@ const activityController = {
   getPublicActivities: async (req, res) => {
     try {
       const { page, limit, search, academicYear, semester } = req.query;
-      const { rows, total } = await Activity.findAll({ 
-        status: 'ดำเนินการ', 
+      const { rows, total } = await Activity.findAll({
+        status: 'ดำเนินการ',
         publishStatus: 'public',
         page,
         limit,
@@ -40,11 +40,11 @@ const activityController = {
         semester,
         status
       };
-      
+
       if (req.user.role === 'officer') {
-        filters.ownerFacultyCode = req.user.faculty_code;
+        filters.creatorId = req.user.id;
       }
-      
+
       const { rows, total } = await Activity.findAll(filters);
       res.json({ rows, total, page: parseInt(page) || 1, limit: parseInt(limit) || 10 });
     } catch (error) {
@@ -59,7 +59,7 @@ const activityController = {
     try {
       const activity = await Activity.findById(req.params.id);
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
-      
+
       // If management headers or specific management flag is used, check access
       // For now, simple view is fine, but we might want to restrict if it's private
       if (activity.publish_status === 'private' && req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
@@ -108,32 +108,41 @@ const activityController = {
         data.skills = data.skills || [];
         data.faculties = data.faculties || [];
       }
-      
+
       // Officers can only create activities for their own faculty
       if (req.user.role === 'officer') {
         data.ownerFacultyCode = req.user.faculty_code;
+      } else if (!data.ownerFacultyCode && (req.user.role === 'admin' || req.user.role === 'superadmin')) {
+        // For Admins/Superadmins, if no ownerFacultyCode is provided, we might leave it as null
+        // or they can select one. For now, let's assume they can provide it in req.body.
       }
-      
+
       // Force private status if it's "ขออนุมัติ" (default)
       if (!data.status || data.status === 'ขออนุมัติ') {
         data.publishStatus = 'private';
       }
-      
+
       const activity = await Activity.create(data, req.user.id);
 
       // Handle Attachments
       if (req.files && req.files['attachments'] && activity.id) {
         let metadata = [];
         if (data.attachmentMetadata) {
-          try { metadata = JSON.parse(data.attachmentMetadata); } catch (e) { metadata = []; }
+          try {
+            metadata = JSON.parse(data.attachmentMetadata);
+          } catch (e) {
+            console.error('Error parsing metadata:', e);
+            metadata = [];
+          }
         }
 
         for (const file of req.files['attachments']) {
           const fileMeta = metadata.find(m => m.originalName === file.originalname) || {};
+          const utf8Name = Buffer.from(file.originalname, 'latin1').toString('utf8');
           await Activity.addAttachment(activity.id, {
             filePath: file.path.replace(/\\/g, '/'),
-            fileName: file.originalname,
-            displayName: fileMeta.displayName || file.originalname,
+            fileName: utf8Name,
+            displayName: fileMeta.displayName || utf8Name,
             isPublished: fileMeta.isPublished !== undefined ? fileMeta.isPublished : true
           });
         }
@@ -171,7 +180,7 @@ const activityController = {
       const activityId = req.params.id;
       const { publishStatus } = req.body;
       const activity = await Activity.findById(activityId);
-      
+
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
       // RBAC Ownership Check
@@ -235,14 +244,17 @@ const activityController = {
     try {
       const activityId = req.params.id;
       const activity = await Activity.findById(activityId);
-      
+
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
+
+      // RBAC Ownership Check: Admin/Superadmin OR Creator
+      const isOwner = req.user.role === 'admin' || req.user.role === 'superadmin' || parseInt(activity.creator_id) === parseInt(req.user.id);
       
-      // RBAC Ownership Check
+      if (!isOwner) {
+        return res.status(403).json({ message: 'คุณไม่มีสิทธิ์แก้ไขกิจกรรมที่ไม่ได้สร้างเอง' });
+      }
+
       if (req.user.role === 'officer') {
-        if (activity.owner_faculty_code !== req.user.faculty_code) {
-          return res.status(403).json({ message: 'You can only update activities in your own faculty' });
-        }
         // Status Check: Cannot edit if status is 'ปิดกิจกรรม'
         if (activity.status === 'ปิดกิจกรรม') {
           return res.status(403).json({ message: 'ไม่สามารถแก้ไขกิจกรรมที่ปิดแล้วได้' });
@@ -277,11 +289,17 @@ const activityController = {
       if (req.files && req.files['attachments']) {
         let metadata = [];
         if (data.attachmentMetadata) {
-          try { metadata = JSON.parse(data.attachmentMetadata); } catch (e) { metadata = []; }
+          try {
+            metadata = JSON.parse(data.attachmentMetadata);
+          } catch (e) {
+            console.error('Error parsing metadata:', e);
+            metadata = [];
+          }
         }
 
         for (const file of req.files['attachments']) {
           const fileMeta = metadata.find(m => m.originalName === file.originalname) || {};
+
           await Activity.addAttachment(activityId, {
             filePath: file.path.replace(/\\/g, '/'),
             fileName: file.originalname,
@@ -304,7 +322,7 @@ const activityController = {
     try {
       const activityId = req.params.id;
       const activity = await Activity.findById(activityId);
-      
+
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
       // RBAC Ownership Check: Officer can only delete if they are the creator
@@ -326,8 +344,25 @@ const activityController = {
     try {
       const { attachmentId } = req.params;
       const { isPublished } = req.body;
-      
+
       const updated = await Activity.updateAttachmentVisibility(attachmentId, isPublished);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  },
+
+  /**
+   * Update individual attachment details
+   */
+  updateAttachment: async (req, res) => {
+    try {
+      const { attachmentId } = req.params;
+      const { displayName, isPublished } = req.body;
+
+      const updated = await Activity.updateAttachment(attachmentId, { displayName, isPublished });
+      if (!updated) return res.status(404).json({ message: 'Attachment not found' });
+      
       res.json(updated);
     } catch (error) {
       res.status(500).json({ message: error.message });
@@ -340,7 +375,7 @@ const activityController = {
   deleteAttachment: async (req, res) => {
     try {
       const { attachmentId } = req.params;
-      
+
       // Potential: Add fs.unlink here to delete actual file if needed
       const deleted = await Activity.deleteAttachment(attachmentId);
       res.json(deleted);
@@ -360,7 +395,7 @@ const activityController = {
       // Check if activity exists and is open
       const activity = await Activity.findById(activityId);
       if (!activity) return res.status(404).json({ message: 'ไม่พบข้อมูลกิจกรรม' });
-      
+
       if (activity.status !== 'ดำเนินการ') {
         return res.status(400).json({ message: 'กิจกรรมนี้ยังไม่เปิดให้ลงทะเบียน' });
       }

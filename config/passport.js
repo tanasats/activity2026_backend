@@ -11,6 +11,8 @@ passport.use(new GoogleStrategy({
     const email = profile.emails[0].value;
     const name = profile.displayName;
     const picture = profile.photos[0].value;
+    const firstname = profile.name?.givenName || null;
+    const lastname = profile.name?.familyName || null;
 
     try {
       let user = await User.findByEmail(email);
@@ -37,7 +39,7 @@ passport.use(new GoogleStrategy({
         }
 
         const determinedRole = getRoleFromEmail(email);
-        user = await User.create(email, name, picture, determinedRole, facultyCode);
+        user = await User.create(email, name, picture, determinedRole, facultyCode, firstname, lastname);
       }
       return done(null, user);
     } catch (err) {
