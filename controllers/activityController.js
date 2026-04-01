@@ -309,12 +309,13 @@ const activityController = {
         }
 
         for (const file of req.files['attachments']) {
+          const utf8Name = Buffer.from(file.originalname, 'latin1').toString('utf8');
           const fileMeta = metadata.find(m => m.originalName === file.originalname) || {};
 
           await Activity.addAttachment(activityId, {
             filePath: file.path.replace(/\\/g, '/'),
-            fileName: file.originalname,
-            displayName: fileMeta.displayName || file.originalname,
+            fileName: utf8Name,
+            displayName: fileMeta.displayName || utf8Name,
             isPublished: fileMeta.isPublished !== undefined ? fileMeta.isPublished : true
           });
         }
