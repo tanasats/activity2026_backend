@@ -5,7 +5,7 @@ const registrationManagementController = require('../controllers/registrationMan
 const activityImageController = require('../controllers/activityImageController');
 const exportController = require('../controllers/exportController');
 const registrationImageController = require('../controllers/registrationImageController');
-const { authenticateToken, authorizeRoles } = require('../middleware/auth');
+const { authenticateToken, softAuthenticateToken, authorizeRoles } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Public: Get all active activities
@@ -18,9 +18,9 @@ router.get('/manage',
   activityController.getManageActivities
 );
 
-// Officer/Admin: Get specific activity detail (Authenticated)
+// Get specific activity detail (Public/Authenticated)
 router.get('/:id', 
-  authenticateToken,
+  softAuthenticateToken,
   activityController.getActivityById
 );
 

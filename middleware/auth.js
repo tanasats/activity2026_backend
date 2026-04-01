@@ -13,6 +13,24 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+const softAuthenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return next();
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      // If token is invalid, we still proceed but without req.user
+      return next();
+    }
+    req.user = user;
+    next();
+  });
+};
+
 const authorizeRoles = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
@@ -22,4 +40,4 @@ const authorizeRoles = (...roles) => {
   };
 };
 
-module.exports = { authenticateToken, authorizeRoles };
+module.exports = { authenticateToken, softAuthenticateToken, authorizeRoles };

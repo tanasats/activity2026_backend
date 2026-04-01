@@ -42,7 +42,7 @@ const activityController = {
       };
 
       if (req.user.role === 'officer') {
-        filters.creatorId = req.user.id;
+        filters.ownerFacultyCode = req.user.faculty_code;
       }
 
       const { rows, total } = await Activity.findAll(filters);
@@ -60,10 +60,19 @@ const activityController = {
       const activity = await Activity.findById(req.params.id);
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
-      // If management headers or specific management flag is used, check access
-      // For now, simple view is fine, but we might want to restrict if it's private
-      if (activity.publish_status === 'private' && req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
-        return res.status(403).json({ message: 'Access denied to this activity' });
+      // If activity is private, check for permission
+      if (activity.publish_status === 'private') {
+        if (!req.user) {
+          return res.status(401).json({ message: 'Authentication required to view this private activity' });
+        }
+        
+        const isOwner = activity.creator_id === req.user.id;
+        const isFacultyStaff = req.user.role === 'officer' && activity.owner_faculty_code === req.user.faculty_code;
+        const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
+
+        if (!isOwner && !isFacultyStaff && !isAdmin) {
+          return res.status(403).json({ message: 'Access denied to this activity' });
+        }
       }
 
       res.json(activity);
@@ -184,8 +193,10 @@ const activityController = {
       if (!activity) return res.status(404).json({ message: 'Activity not found' });
 
       // RBAC Ownership Check
-      if (req.user.role === 'officer' && activity.owner_faculty_code !== req.user.faculty_code) {
-        return res.status(403).json({ message: 'You can only change visibility for activities in your own faculty' });
+      const isOwner = req.user.role === 'admin' || req.user.role === 'superadmin' || parseInt(activity.creator_id) === parseInt(req.user.id);
+      
+      if (!isOwner) {
+        return res.status(403).json({ message: 'คุณไม่มีสิทธิ์เปลี่ยนการมองเห็นของกิจกรรมที่ไม่ได้สร้างเอง' });
       }
 
       // Visibility Restriction: Request Approval must be private
