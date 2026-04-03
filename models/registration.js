@@ -17,7 +17,7 @@ const Registration = {
   getDetail: async (id) => {
     const result = await query(
       `SELECT r.*, 
-              a.title as activity_title, a.activity_code, a.activity_start, a.activity_end, a.location, a.hours, a.credits,
+              a.title as activity_title, a.activity_code, a.activity_start, a.activity_end, a.location, a.hours, a.credits, a.allow_selfie_checkin,
               u.username as student_name, u.email as student_email, SPLIT_PART(u.email, '@', 1) as student_code,
               f.faculty_name
        FROM registrations r
@@ -99,6 +99,21 @@ const Registration = {
        JOIN userauth u ON r.user_id = u.id
        WHERE r.activity_id = $1 AND r.qr_code_hash = $2`,
       [activityId, qrHash]
+    );
+    return result.rows[0];
+  },
+
+  selfieCheckIn: async (id, { checkinImage, lat, lng }) => {
+    const result = await query(
+      `UPDATE registrations 
+       SET is_attended = true, 
+           checkin_image = $1, 
+           checkin_at = CURRENT_TIMESTAMP,
+           checkin_lat = $2,
+           checkin_lng = $3
+       WHERE id = $4 AND is_attended = false
+       RETURNING *`,
+      [checkinImage, lat, lng, id]
     );
     return result.rows[0];
   }

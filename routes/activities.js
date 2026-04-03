@@ -118,6 +118,13 @@ router.post('/:activityId/check-in',
   registrationManagementController.checkInByHash
 );
 
+router.post('/:activityId/selfie-checkin',
+  authenticateToken,
+  authorizeRoles('student'),
+  upload.single('image'),
+  registrationManagementController.selfieCheckin
+);
+
 // --- Student Registration Images (Evidence) ---
 router.get('/registrations/:registrationId/images',
   authenticateToken,

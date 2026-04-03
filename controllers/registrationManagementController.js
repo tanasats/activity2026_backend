@@ -1,5 +1,8 @@
 const Registration = require('../models/registration');
 const Activity = require('../models/activity');
+const fs = require('fs');
+const ExifParser = require('exif-parser');
+const { getDistance } = require('../utils/geoUtils');
 
 const registrationManagementController = {
   /**
@@ -133,6 +136,99 @@ const registrationManagementController = {
       });
     } catch (error) {
       console.error('checkInByHash Error:', error);
+      res.status(500).json({ message: error.message });
+    }
+  },
+  /**
+   * Student Selfie Check-in
+   */
+  selfieCheckin: async (req, res) => {
+    try {
+      const { activityId } = req.params;
+      const userId = req.user.id;
+
+      if (!req.file) return res.status(400).json({ message: 'กรุณาอัปโหลดรูปภาพเพื่อเช็คอิน' });
+
+      // 1. Get Activity and Registration
+      const activity = await Activity.findById(activityId);
+      if (!activity) return res.status(404).json({ message: 'ไม่พบข้อมูลกิจกรรม' });
+
+      if (!activity.allow_selfie_checkin) {
+        return res.status(400).json({ message: 'กิจกรรมนี้ไม่รองรับการเช็คอินด้วยภาพถ่าย' });
+      }
+
+      if (!activity.latitude || !activity.longitude) {
+        return res.status(400).json({ message: 'ผู้จัดการกิจกรรมยังไม่ได้กำหนดพิกัดสถานที่จัดงาน' });
+      }
+
+      // Check if student is registered
+      const registrations = await Registration.findByUser(userId);
+      const registration = registrations.find(r => r.activity_id == activityId);
+      
+      if (!registration) {
+        return res.status(404).json({ message: 'คุณยังไม่ได้ลงทะเบียนกิจกรรมนี้' });
+      }
+
+      if (registration.is_attended) {
+        return res.status(400).json({ message: 'คุณได้เช็คอินกิจกรรมนี้ไปแล้ว' });
+      }
+
+      // 2. Extract EXIF Data
+      const buffer = fs.readFileSync(req.file.path);
+      const parser = ExifParser.create(buffer);
+      const exifData = parser.parse();
+
+      const { gps, tags } = exifData;
+
+      if (!gps || !gps.Latitude || !gps.Longitude) {
+        return res.status(400).json({ 
+          message: 'ไม่พบข้อมูลพิกัด GPS ในรูปภาพ กรุณาตรวจสอบว่าคุณได้เปิดสิทธิ์การเข้าถึงตำแหน่งในแอพกล้องถ่ายรูปแล้ว' 
+        });
+      }
+
+      // 3. Verify Distance
+      const distance = getDistance(
+        activity.latitude, activity.longitude,
+        gps.Latitude, gps.Longitude
+      );
+
+      const radius = activity.checkin_radius || 200;
+      if (distance > radius) {
+        return res.status(400).json({ 
+          message: `พิกัดของคุณอยู่นอกพื้นที่จัดกิจกรรม (ระยะห่างปัจจุบัน: ${Math.round(distance)} เมตร, รัศมีที่อนุญาต: ${radius} เมตร)` 
+        });
+      }
+
+      // 4. Verify Time (using EXIF CreateDate if available, else use current time)
+      // Note: EXIF tags.CreateDate is unix timestamp
+      const photoTime = tags.CreateDate ? new Date(tags.CreateDate * 1000) : new Date();
+      const activityStart = new Date(activity.activity_start);
+      const activityEnd = new Date(activity.activity_end);
+
+      // Add a small buffer (e.g., 30 mins before/after)
+      const bufferMs = 30 * 60 * 1000;
+      if (photoTime < new Date(activityStart.getTime() - bufferMs) || photoTime > new Date(activityEnd.getTime() + bufferMs)) {
+        return res.status(400).json({ 
+          message: 'เวลาที่ถ่ายภาพไม่อยู่ในช่วงเวลาการจัดกิจกรรม' 
+        });
+      }
+
+      // 5. Finalize Check-in
+      const checkinImage = req.file.path.replace(/\\/g, '/');
+      const updated = await Registration.selfieCheckIn(registration.id, {
+        checkinImage,
+        lat: gps.Latitude,
+        lng: gps.Longitude
+      });
+
+      res.json({
+        message: 'เช็คอินสำเร็จ! ขอบคุณที่เข้าร่วมกิจกรรม',
+        distance: Math.round(distance),
+        time: photoTime.toLocaleString('th-TH')
+      });
+
+    } catch (error) {
+      console.error('selfieCheckin Error:', error);
       res.status(500).json({ message: error.message });
     }
   }

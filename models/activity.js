@@ -57,8 +57,9 @@ const Activity = {
           activity_code, academic_year, semester, agency_id, type_id, title, description, 
           location, activity_start, activity_end, registration_start, registration_end,
           hours, loaner_hours, credits, max_participants, budget_source_id, budget_requested, 
-          status, publish_status, creator_id, last_updated_by, owner_faculty_code, cover_image
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) 
+          status, publish_status, creator_id, last_updated_by, owner_faculty_code, cover_image,
+          latitude, longitude, checkin_radius, allow_selfie_checkin
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) 
         RETURNING *`,
       [
         activityCode,
@@ -84,7 +85,11 @@ const Activity = {
         creatorId,
         creatorId,
         data.ownerFacultyCode,
-        data.coverImage
+        data.coverImage,
+        toFloat(data.latitude),
+        toFloat(data.longitude),
+        toInt(data.checkinRadius) || 200,
+        data.allowSelfieCheckin === 'true' || data.allowSelfieCheckin === true
       ]
     );
 
@@ -295,6 +300,11 @@ const Activity = {
       return isNaN(parsed) ? 0 : parsed;
     };
 
+    const toBool = (val) => {
+      if (val === 'true' || val === true) return true;
+      return false;
+    };
+
     // 1. Update main activity table
     const result = await query(
       `UPDATE activities SET 
@@ -305,8 +315,9 @@ const Activity = {
         registration_start = $14, registration_end = $15,
         budget_source_id = $16, budget_requested = $17,
         publish_status = $18, cover_image = COALESCE($19, cover_image),
-        last_updated_by = $20, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $21 RETURNING *`,
+        latitude = $20, longitude = $21, checkin_radius = $22, allow_selfie_checkin = $23,
+        last_updated_by = $24, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $25 RETURNING *`,
       [
         toInt(data.academicYear),
         toInt(data.semester),
@@ -327,6 +338,10 @@ const Activity = {
         toFloat(data.budgetRequested),
         data.publishStatus,
         data.coverImage,
+        toFloat(data.latitude),
+        toFloat(data.longitude),
+        toInt(data.checkinRadius),
+        toBool(data.allowSelfieCheckin),
         updaterId,
         id
       ]
